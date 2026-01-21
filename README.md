@@ -1,6 +1,4 @@
-Here is the complete, professional **README.md** content in a single Markdown window. You can copy this entire block and paste it directly into your GitHub file.
 
-```markdown
 # 🧬 BioClear ML: Predictive Pharmacokinetics Dashboard
 
 BioClear ML is a specialized Data Science application designed to bridge the gap between **Biotechnology** and **Machine Learning**. It predicts personalized drug elimination windows by integrating physiological markers with first-order kinetic models.
