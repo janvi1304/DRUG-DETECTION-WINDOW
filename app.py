@@ -2,79 +2,97 @@ import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle
+import pandas as pd
 
-# 1. Load the ML Model
+# --- STEP 1: INITIALIZE SESSION STATE ---
+# This must be at the very top to prevent errors
+if 'study_data' not in st.session_state:
+    st.session_state.study_data = []
+
+# --- STEP 2: LOAD ML MODEL ---
 try:
     with open('drug_model.pkl', 'rb') as f:
         ml_model = pickle.load(f)
 except:
-    st.error("Please run 'python train_model.py' first!")
+    st.error("Model file 'drug_model.pkl' not found. Please run your training script first.")
 
-st.title("🧪 Multi-Patient BioClear Simulator")
+# --- STEP 3: DATABASE ---
+DRUG_DB = {
+    "Nicotine": {"hl": 2.0, "desc": "Rapid renal clearance."},
+    "Caffeine": {"hl": 5.0, "desc": "Hepatic metabolism (CYP1A2)."},
+    "THC": {"hl": 30.0, "desc": "Lipophilic; stored in fat cells."},
+    "Alcohol": {"hl": 1.5, "desc": "Fast metabolism."}
+}
 
-# 2. Initialize Session State (This stores our patients)
-if 'patients' not in st.session_state:
-    st.session_state.patients = []
+# --- STEP 4: SIDEBAR UI ---
+st.sidebar.title("🩺 Patient Inputs")
 
-# 3. Sidebar for adding new patients
-st.sidebar.header("Add New Patient Profile")
-new_bmi = st.sidebar.slider("BMI", 15.0, 45.0, 22.0)
-new_age = st.sidebar.slider("Age", 18, 80, 25)
-new_name = st.sidebar.text_input("Patient Name", f"Patient {len(st.session_state.patients) + 1}")
+# BMI Calculator Section
+with st.sidebar.expander("1. BMI Calculator", expanded=True):
+    weight = st.number_input("Weight (kg)", 10.0, 200.0, 70.0)
+    height_cm = st.number_input("Height (cm)", 50.0, 250.0, 170.0)
+    height_m = height_cm / 100
+    calc_bmi = round(weight / (height_m ** 2), 1)
+    st.info(f"Calculated BMI: {calc_bmi}")
 
-if st.sidebar.button("Add Patient to Study"):
-    # Predict half-life immediately using the ML model
-    hl = ml_model.predict([[new_bmi, new_age, 1.0]])[0]
-    st.session_state.patients.append({
-        "name": new_name,
-        "bmi": new_bmi,
-        "age": new_age,
-        "hl": hl
+# Simulation Parameters
+st.sidebar.markdown("---")
+st.sidebar.subheader("2. Parameters")
+drug_choice = st.sidebar.selectbox("Select Drug", list(DRUG_DB.keys()))
+bmi_val = st.sidebar.slider("Use BMI Value", 15.0, 45.0, float(calc_bmi))
+age_val = st.sidebar.slider("Age", 18, 80, 25)
+dose_val = st.sidebar.number_input("Dose (mg)", value=100)
+
+# THE ADD BUTTON (Placed in sidebar for visibility)
+if st.sidebar.button("➕ Add Patient to Analysis"):
+    # Use ML to predict multiplier (normalizing around 24h)
+    multiplier = ml_model.predict([[bmi_val, age_val, 1.0]])[0] / 24.0
+    final_hl = DRUG_DB[drug_choice]["hl"] * multiplier
+    
+    # Save to memory
+    st.session_state.study_data.append({
+        "Drug": drug_choice,
+        "BMI": bmi_val,
+        "Age": age_val,
+        "HL_Hours": round(final_hl, 2),
+        "Dose": dose_val
     })
+    st.sidebar.success("Patient added!")
 
-if st.sidebar.button("Clear All Patients"):
-    st.session_state.patients = []
+if st.sidebar.button("🗑️ Clear All Data"):
+    st.session_state.study_data = []
+    st.rerun()
 
-# 4. Display and Plot
-if st.session_state.patients:
-    dose = st.number_input("Shared Dose (mg)", value=100)
-    fig, ax = plt.subplots(figsize=(10, 6))
-    time = np.linspace(0, 100, 500)
-    
-    # Loop through all patients in the list
-    for p in st.session_state.patients:
-        k = np.log(2) / p['hl']
-        conc = dose * np.exp(-k * time)
-        ax.plot(time, conc, label=f"{p['name']} (BMI: {p['bmi']})")
+# --- STEP 5: MAIN DASHBOARD ---
+st.title("🧪 BioClear ML: Drug Elimination Dashboard")
 
-    ax.axhline(y=10, color='r', linestyle='--', label="Detection Limit")
-    ax.set_xlabel("Hours")
-    ax.set_ylabel("Concentration (ng/mL)")
-    ax.legend()
-    st.pyplot(fig)
+tab1, tab2 = st.tabs(["📈 Visualization", "📋 Data Table"])
 
-    # Display a summary table
-    st.write("### Patient Comparison Table")
-    st.table(st.session_state.patients)
-    import pandas as pd
+with tab1:
+    if st.session_state.study_data:
+        fig, ax = plt.subplots(figsize=(10, 5))
+        time = np.linspace(0, 72, 500)
+        
+        for p in st.session_state.study_data:
+            k = np.log(2) / p["HL_Hours"]
+            conc = p["Dose"] * np.exp(-k * time)
+            ax.plot(time, conc, label=f"{p['Drug']} (BMI: {p['BMI']})")
+        
+        ax.axhline(y=10, color='r', linestyle='--', label="Detection Limit")
+        ax.set_xlabel("Hours")
+        ax.set_ylabel("Concentration (ng/mL)")
+        ax.legend()
+        st.pyplot(fig)
+    else:
+        st.info("Add a patient from the sidebar to see the graph.")
 
-if st.session_state.patients:
-    # 1. Create a DataFrame from our patient list
-    export_df = pd.DataFrame(st.session_state.patients)
-    
-    # 2. Add a calculated column for "Estimated Clear Time"
-    # Formula: t = -ln(cutoff/dose) / k
-    export_df['clear_time_hrs'] = -np.log(10/dose) / (np.log(2)/export_df['hl'])
-    
-    # 3. Convert DataFrame to CSV
-    csv = export_df.to_csv(index=False).encode('utf-8')
-
-    # 4. Create the Download Button
-    st.download_button(
-        label="📥 Download Study Data as CSV",
-        data=csv,
-        file_name='bioclear_study_results.csv',
-        mime='text/csv',
-    )
-else:
-    st.info("Add patients from the sidebar to start the simulation.")
+with tab2:
+    if st.session_state.study_data:
+        df = pd.DataFrame(st.session_state.study_data)
+        st.dataframe(df, use_container_width=True)
+        
+        # Download CSV
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Results", data=csv, file_name="bioclear_results.csv", mime="text/csv")
+    else:
+        st.write("No data available yet.")
